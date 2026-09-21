@@ -204,6 +204,29 @@ button.principal:focus-visible { outline: 2px solid var(--ink); outline-offset: 
 .aviso.erro { color: var(--erro); }
 .aviso.ok { color: var(--ok); font-weight: 500; }
 
+/* histórico: miniaturas dos últimos cards baixados */
+.hist-topo { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+button.link { font: inherit; font-size: 12.5px; font-weight: 600; color: var(--azul-vivo);
+  background: none; border: 0; padding: 2px 0; cursor: pointer; }
+button.link:hover { text-decoration: underline; }
+button.link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.hist { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.hist .item { position: relative; }
+.hist .abrir { display: block; width: 100%; padding: 0; cursor: pointer; text-align: left;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+  color: var(--ink-3); font: inherit; font-size: 11px; line-height: 1.3; }
+.hist .abrir:hover { border-color: var(--ink-3); }
+.hist .abrir:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hist .item.on .abrir { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.hist img { display: block; width: 100%; aspect-ratio: 9 / 16; object-fit: cover; background: #000; }
+.hist .quando { display: block; padding: 5px 7px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hist .apagar { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; padding: 0;
+  border: 0; border-radius: 50%; cursor: pointer; background: rgba(8,13,22,.78); color: #fff;
+  font-size: 14px; line-height: 22px; opacity: 0; transition: opacity .12s; }
+.hist .item:hover .apagar, .hist .apagar:focus-visible { opacity: 1; }
+.hist .apagar:focus-visible { outline: 2px solid var(--accent); }
+@media (hover: none) { .hist .apagar { opacity: 1; } }
+
 .palco {
   background: var(--stage);
   background-image: var(--hachura);
@@ -309,6 +332,15 @@ canvas#tela.arrastando { cursor: grabbing; }
     <div class="campo">
       <button class="principal" id="baixar">Baixar PNG</button>
       <p class="aviso" id="status"></p>
+    </div>
+
+    <div class="campo" id="campoHist">
+      <div class="hist-topo">
+        <span class="rot">Histórico</span>
+        <button type="button" class="link" id="novoCard">+ Novo card</button>
+      </div>
+      <p class="aviso" id="histAviso">Cada card baixado fica guardado aqui, até 20, neste navegador. Clique num deles para voltar e alterar texto, foto ou cor.</p>
+      <div class="hist" id="hist"></div>
     </div>
 
   </section>
@@ -733,6 +765,7 @@ canvas#tela.arrastando { cursor: grabbing; }
     ligarArquivo();
     ligarArraste();
     $('baixar').addEventListener('click', baixar);
+    ligarHistorico();
   }
 
   /* Só branco e preto: a legenda é exigência legal e precisa ler sobre qualquer foto. */
@@ -783,21 +816,48 @@ canvas#tela.arrastando { cursor: grabbing; }
       $('status').className = 'aviso erro';
       return;
     }
-    var fr = new FileReader();
-    fr.onload = function () {
-      carregaImg(fr.result).then(function (im) {
-        st.foto = im;
-        st.panX = 0; st.panY = 0;
-        st.zoom = 1;
-        $('zoom').value = 100;
-        $('zoomVal').textContent = '100%';
-        $('dropTitulo').textContent = file.name.length > 30 ? file.name.slice(0, 28) + '…' : file.name;
-        $('status').textContent = '';
-        $('status').className = 'aviso';
-        desenhar();
-      });
-    };
-    fr.readAsDataURL(file);
+    var url = URL.createObjectURL(file);
+    carregaImg(url).then(reduzirFoto).then(function (r) {
+      URL.revokeObjectURL(url);
+      st.foto = r.img;
+      st.fotoBlob = r.blob;
+      st.fotoNome = file.name;
+      st.panX = 0; st.panY = 0;
+      st.zoom = 1;
+      $('zoom').value = 100;
+      $('zoomVal').textContent = '100%';
+      mostrarNomeFoto();
+      $('status').textContent = '';
+      $('status').className = 'aviso';
+      desenhar();
+    }).catch(function () {
+      $('status').textContent = 'Não consegui abrir essa imagem. Tente outra.';
+      $('status').className = 'aviso erro';
+    });
+  }
+
+  /* A foto que vai para o histórico é a MESMA que aparece na tela: reduzida a
+     3000px no lado maior. Foto de celular inteira (10 MB) × 20 pesaria no
+     navegador, e 3000 sobra para um canvas de 1080 mesmo com zoom. */
+  var FOTO_MAX = 3000;
+  function reduzirFoto(im) {
+    var s = Math.min(1, FOTO_MAX / Math.max(im.naturalWidth, im.naturalHeight));
+    var o = document.createElement('canvas');
+    o.width = Math.round(im.naturalWidth * s);
+    o.height = Math.round(im.naturalHeight * s);
+    o.getContext('2d').drawImage(im, 0, 0, o.width, o.height);
+    return new Promise(function (res, rej) {
+      o.toBlob(function (blob) {
+        if (!blob) return rej(new Error('toBlob'));
+        var u = URL.createObjectURL(blob);
+        carregaImg(u).then(function (img) { res({ img: img, blob: blob }); }, rej);
+      }, 'image/jpeg', 0.9);
+    });
+  }
+
+  function mostrarNomeFoto() {
+    var n = st.fotoNome || 'Escolher foto';
+    $('dropTitulo').textContent = n.length > 30 ? n.slice(0, 28) + '…' : n;
   }
 
   function ligarArraste() {
@@ -851,7 +911,169 @@ canvas#tela.arrastando { cursor: grabbing; }
       setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
       s.textContent = 'Salvo como ' + nome;
       s.className = 'aviso ok';
+      guardarNoHistorico().then(function (ok) {
+        if (ok) s.textContent = 'Salvo como ' + nome + ' · guardado no histórico';
+      });
     }, 'image/png');
+  }
+
+  /* ---------- histórico ----------
+     Os últimos 20 cards baixados, com tudo o que precisa para reabrir: texto,
+     cor, formato, foto e ajustes. Fica no IndexedDB DESTE navegador (o Pages
+     não tem servidor): cada pessoa vê o seu. Reabrir e baixar de novo
+     atualiza o mesmo item em vez de criar outro. */
+  var HIST_MAX = 20;
+  var CAMPOS = ['formato', 'modelo', 'texto', 'zoom', 'panX', 'panY', 'posy', 'escala',
+                'sombra', 'legendaOn', 'legendaCor', 'legendaSombra', 'legenda'];
+  var PADRAO = {};
+  CAMPOS.forEach(function (k) { PADRAO[k] = st[k]; });
+  st.fotoBlob = null; st.fotoNome = ''; st.ativo = null;
+
+  var dbPromessa = null;
+  function db() {
+    if (!dbPromessa) dbPromessa = new Promise(function (res, rej) {
+      if (!window.indexedDB) return rej(new Error('sem IndexedDB'));
+      var r = indexedDB.open('estudio-aspas-sictv', 1);
+      r.onupgradeneeded = function () { r.result.createObjectStore('cards', { keyPath: 'id' }); };
+      r.onsuccess = function () { res(r.result); };
+      r.onerror = function () { rej(r.error); };
+    });
+    return dbPromessa;
+  }
+  function loja(modo, fn) {
+    return db().then(function (d) {
+      return new Promise(function (res, rej) {
+        var tx = d.transaction('cards', modo), s = tx.objectStore('cards'), out = fn(s);
+        tx.oncomplete = function () { res(out && out.result !== undefined ? out.result : out); };
+        tx.onerror = function () { rej(tx.error); };
+        tx.onabort = function () { rej(tx.error); };
+      });
+    });
+  }
+  function listar() {
+    return loja('readonly', function (s) { return s.getAll(); }).then(function (l) {
+      return l.sort(function (a, b) { return b.quando - a.quando; });
+    });
+  }
+
+  function miniatura() {
+    var o = document.createElement('canvas');
+    o.width = 180; o.height = Math.round(180 * cv.height / cv.width);
+    o.getContext('2d').drawImage(cv, 0, 0, o.width, o.height);
+    return o.toDataURL('image/jpeg', 0.72);
+  }
+
+  function guardarNoHistorico() {
+    var item = { id: st.ativo || ('c' + Date.now() + Math.random().toString(36).slice(2, 6)),
+                 quando: Date.now(), foto: st.fotoBlob, fotoNome: st.fotoNome, mini: miniatura() };
+    CAMPOS.forEach(function (k) { item[k] = st[k]; });
+    return loja('readwrite', function (s) { s.put(item); }).then(function () {
+      st.ativo = item.id;
+      return listar();
+    }).then(function (l) {
+      var sobra = l.slice(HIST_MAX);
+      if (!sobra.length) return;
+      return loja('readwrite', function (s) { sobra.forEach(function (x) { s.delete(x.id); }); });
+    }).then(function () { return desenharHistorico(); }).then(function () { return true; })
+      .catch(function () { return false; });
+  }
+
+  function quandoTexto(ms) {
+    var d = new Date(ms), hoje = new Date();
+    var h = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    if (d.toDateString() === hoje.toDateString()) return 'hoje ' + h;
+    return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + ' ' + h;
+  }
+
+  function desenharHistorico() {
+    return listar().then(function (l) {
+      var caixa = $('hist');
+      caixa.innerHTML = '';
+      l.forEach(function (it) {
+        var div = document.createElement('div');
+        div.className = 'item' + (it.id === st.ativo ? ' on' : '');
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'abrir';
+        var resumo = (it.texto || '').trim().slice(0, 60);
+        b.title = 'Abrir para editar: ' + resumo;
+        var im = document.createElement('img');
+        im.src = it.mini; im.alt = '';
+        var q = document.createElement('span');
+        q.className = 'quando';
+        q.textContent = quandoTexto(it.quando);
+        b.appendChild(im); b.appendChild(q);
+        b.addEventListener('click', function () { abrirDoHistorico(it); });
+        var x = document.createElement('button');
+        x.type = 'button';
+        x.className = 'apagar';
+        x.textContent = '×';
+        x.title = 'Tirar do histórico';
+        x.setAttribute('aria-label', 'Tirar do histórico o card de ' + quandoTexto(it.quando));
+        x.addEventListener('click', function () {
+          loja('readwrite', function (s) { s.delete(it.id); }).then(function () {
+            if (st.ativo === it.id) st.ativo = null;
+            desenharHistorico();
+          });
+        });
+        div.appendChild(b); div.appendChild(x);
+        caixa.appendChild(div);
+      });
+    });
+  }
+
+  function aplicarEstado(dados, foto, fotoBlob, fotoNome, id) {
+    CAMPOS.forEach(function (k) { if (dados[k] !== undefined) st[k] = dados[k]; });
+    st.foto = foto; st.fotoBlob = fotoBlob; st.fotoNome = fotoNome || ''; st.ativo = id;
+    sincronizarControles();
+    desenhar();
+    desenharHistorico();
+  }
+
+  function abrirDoHistorico(it) {
+    var s = $('status');
+    var foto = it.foto ? carregaImg(URL.createObjectURL(it.foto)) : Promise.resolve(null);
+    foto.then(function (im) {
+      aplicarEstado(it, im, it.foto || null, it.fotoNome, it.id);
+      s.textContent = 'Editando o card de ' + quandoTexto(it.quando) + '. Ao baixar, ele é atualizado no histórico.';
+      s.className = 'aviso';
+    }).catch(function () {
+      s.textContent = 'Não consegui abrir esse card do histórico.';
+      s.className = 'aviso erro';
+    });
+  }
+
+  function novoCard() {
+    aplicarEstado(PADRAO, null, null, '', null);
+    $('arquivo').value = '';
+    $('status').textContent = '';
+    $('status').className = 'aviso';
+  }
+
+  // põe cada controle do painel no valor que está em st
+  function sincronizarControles() {
+    document.querySelectorAll('#formatos input').forEach(function (i) { i.checked = i.value === st.formato; });
+    document.querySelectorAll('#modelos input').forEach(function (i) { i.checked = i.value === st.modelo; });
+    $('texto').value = st.texto;
+    $('legenda').value = st.legenda;
+    $('temlegenda').checked = st.legendaOn;
+    $('legsombra').checked = st.legendaSombra;
+    $('sombra').checked = st.sombra;
+    $('zoom').value = Math.round(st.zoom * 100); $('zoomVal').textContent = $('zoom').value + '%';
+    $('posy').value = Math.round(st.posy * 100); $('posyVal').textContent = $('posy').value + '%';
+    $('escala').value = Math.round(st.escala * 100); $('escalaVal').textContent = $('escala').value + '%';
+    document.querySelectorAll('#coresLegenda button').forEach(function (b, i) {
+      b.classList.toggle('on', CORES_LEGENDA[i].cor === st.legendaCor);
+    });
+    mostrarNomeFoto();
+  }
+
+  function ligarHistorico() {
+    $('novoCard').addEventListener('click', novoCard);
+    desenharHistorico().catch(function () {
+      $('histAviso').textContent = 'Este navegador não deixou guardar o histórico (janela anônima?). O resto do estúdio funciona normal.';
+      $('novoCard').hidden = true;
+    });
   }
 
   iniciar();

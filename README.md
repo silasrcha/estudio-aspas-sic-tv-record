@@ -26,6 +26,13 @@ só.
 O card fica em Work Sans com entreletra de −4% no texto: sem isso a quebra de
 linha sai diferente do Figma.
 
+## Histórico
+
+Os últimos 20 cards baixados ficam guardados no IndexedDB do navegador
+(`estudio-aspas-sictv`), com texto, cor, formato, foto (reduzida a 3000px) e
+ajustes. Clicar numa miniatura reabre o card; baixar de novo atualiza o mesmo
+item. Cada pessoa vê o próprio histórico — o Pages não tem servidor.
+
 ## Autossuficiente
 
 Nenhuma chamada externa. Fontes do card e foto de perfil em base64 no
