@@ -247,6 +247,8 @@ canvas#tela {
   cursor: grab; touch-action: none;
 }
 canvas#tela.arrastando { cursor: grabbing; }
+/* em cima do card: ele só anda na vertical */
+canvas#tela.sobre-card, canvas#tela.movendo-card { cursor: ns-resize; }
 .legenda-palco {
   color: rgba(255,255,255,.55);
   font-size: 12.5px;
@@ -305,7 +307,7 @@ canvas#tela.arrastando { cursor: grabbing; }
         <input type="range" id="zoom" min="100" max="300" value="100" />
         <span class="valor" id="zoomVal">100%</span>
       </div>
-      <p class="aviso">Arraste a foto na prévia para reposicionar.</p>
+      <p class="aviso">Na prévia: arraste a foto para reposicionar, use a rolagem do mouse para o zoom e arraste o card para subir ou descer.</p>
     </div>
 
     <div class="campo">
@@ -700,8 +702,11 @@ canvas#tela.arrastando { cursor: grabbing; }
     var cx = Math.round((f.w - lg) / 2);
     // o bico sobe acima do card: reserva o espaço dele para não sair da tela
     var acima = BICO_ACIMA * k;
-    var cy = Math.round(acima + st.posy * (f.h - alt - acima));
+    var livre = f.h - alt - acima;
+    var cy = Math.round(acima + st.posy * livre);
+    area = { x: cx, y: cy, w: lg, h: alt, acima: acima, livre: livre };
     desenharCard(cx, cy, H, k);
+    if (guia) desenharGuia(f, acima + PADRAO.posy * livre);
 
     if (st.legendaOn && st.legenda.trim()) desenharLegenda();
 
@@ -860,25 +865,111 @@ canvas#tela.arrastando { cursor: grabbing; }
     $('dropTitulo').textContent = n.length > 30 ? n.slice(0, 28) + '…' : n;
   }
 
+  /* ---------- mexer direto na prévia ----------
+     Arrastar em cima do card move o card (só na vertical); arrastar fora dele
+     move a foto; a rolagem do mouse dá zoom na foto em volta do cursor. */
+  var area = null;     // onde o card saiu no último desenho, em px do canvas
+  var guia = null;     // null = sem guia; senão { preso: bool } enquanto arrasta o card
+  var IMA = 14;        // px de TELA: raio da "travadinha" na posição padrão
+
+  function pontoNoCanvas(e) {
+    var r = cv.getBoundingClientRect(), s = cv.width / r.width;
+    return { x: (e.clientX - r.left) * s, y: (e.clientY - r.top) * s, escala: s };
+  }
+  function emCimaDoCard(p) {
+    // o bico sobe acima do card: a faixa dele também conta
+    return area && p.x >= area.x && p.x <= area.x + area.w &&
+           p.y >= area.y - area.acima && p.y <= area.y + area.h;
+  }
+
+  // linha da posição padrão: tracejada enquanto arrasta, cheia quando prende.
+  // Só aparece durante o arraste, então nunca vai para o PNG.
+  function desenharGuia(f, y) {
+    ctx.save();
+    ctx.strokeStyle = guia.preso ? '#FCD700' : 'rgba(255,255,255,.7)';
+    ctx.lineWidth = guia.preso ? 4 : 2;
+    ctx.setLineDash(guia.preso ? [] : [14, 10]);
+    ctx.beginPath();
+    ctx.moveTo(0, Math.round(y) + 0.5);
+    ctx.lineTo(f.w, Math.round(y) + 0.5);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   function ligarArraste() {
-    var ativo = false, ox = 0, oy = 0, px = 0, py = 0;
+    var modo = null, ox = 0, oy = 0, px = 0, py = 0, cy0 = 0;
+
     cv.addEventListener('pointerdown', function (e) {
-      if (!st.foto) return;
-      ativo = true;
-      cv.classList.add('arrastando');
+      var p = pontoNoCanvas(e);
+      if (emCimaDoCard(p)) {
+        modo = 'card';
+        cy0 = area.y;
+        guia = { preso: Math.abs(st.posy - PADRAO.posy) < 1e-6 };
+        cv.classList.add('movendo-card');
+      } else if (st.foto) {
+        modo = 'foto';
+        px = st.panX; py = st.panY;
+        cv.classList.add('arrastando');
+      } else {
+        return;
+      }
+      ox = e.clientX; oy = e.clientY;
       cv.setPointerCapture(e.pointerId);
-      ox = e.clientX; oy = e.clientY; px = st.panX; py = st.panY;
-    });
-    cv.addEventListener('pointermove', function (e) {
-      if (!ativo) return;
-      var escala = cv.width / cv.getBoundingClientRect().width;
-      st.panX = px + (e.clientX - ox) * escala;
-      st.panY = py + (e.clientY - oy) * escala;
       desenhar();
     });
-    ['pointerup', 'pointercancel'].forEach(function (ev) {
-      cv.addEventListener(ev, function () { ativo = false; cv.classList.remove('arrastando'); });
+
+    cv.addEventListener('pointermove', function (e) {
+      if (!modo) {
+        cv.classList.toggle('sobre-card', emCimaDoCard(pontoNoCanvas(e)));
+        return;
+      }
+      var s = cv.width / cv.getBoundingClientRect().width;
+      if (modo === 'foto') {
+        st.panX = px + (e.clientX - ox) * s;
+        st.panY = py + (e.clientY - oy) * s;
+      } else {
+        if (area.livre <= 0) return;
+        var alvo = cy0 + (e.clientY - oy) * s;            // só o eixo vertical
+        var padrao = area.acima + PADRAO.posy * area.livre;
+        var preso = Math.abs(alvo - padrao) <= IMA * s;    // a "travadinha"
+        if (preso) alvo = padrao;
+        if (preso && !guia.preso && navigator.vibrate) navigator.vibrate(8);
+        guia.preso = preso;
+        st.posy = Math.min(1, Math.max(0, (alvo - area.acima) / area.livre));
+        $('posy').value = Math.round(st.posy * 100);
+        $('posyVal').textContent = $('posy').value + '%';
+      }
+      desenhar();
     });
+
+    ['pointerup', 'pointercancel'].forEach(function (ev) {
+      cv.addEventListener(ev, function () {
+        if (!modo) return;
+        modo = null;
+        guia = null;
+        cv.classList.remove('arrastando', 'movendo-card');
+        desenhar();
+      });
+    });
+
+    cv.addEventListener('pointerleave', function () { if (!modo) cv.classList.remove('sobre-card'); });
+
+    // zoom pela rolagem, mantendo parado o ponto da foto que está sob o cursor
+    cv.addEventListener('wheel', function (e) {
+      if (!st.foto) return;
+      e.preventDefault();
+      var p = pontoNoCanvas(e);
+      var L = limitesFoto();
+      var u = (p.x - st.panX) / L.dw, v = (p.y - st.panY) / L.dh;
+      var passo = e.deltaY * (e.deltaMode === 1 ? 16 : 1);
+      st.zoom = Math.min(3, Math.max(1, st.zoom * Math.exp(-passo * 0.0015)));
+      L = limitesFoto();
+      st.panX = p.x - u * L.dw;
+      st.panY = p.y - v * L.dh;
+      $('zoom').value = Math.round(st.zoom * 100);
+      $('zoomVal').textContent = $('zoom').value + '%';
+      desenhar();
+    }, { passive: false });
   }
 
   /* ---------- download ---------- */
